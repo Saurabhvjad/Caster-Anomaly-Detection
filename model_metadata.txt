@@ -1,0 +1,167 @@
+CASTER ISOLATION FOREST MODEL METADATA
+======================================================================
+
+Training Date: 2026-02-09 22:59:31
+Data File: D:\Codes\Python\Caster Anomaly Detection\Merged 21 to 31 Jan good data.xlsx
+
+Training Data:
+  - Total rows: 939,799
+  - Total features: 127
+  - Original features: 77
+  - Engineered features: 51
+
+Model Parameters:
+  - Algorithm: Isolation Forest
+  - Contamination: 0.9%
+  - n_estimators: 100
+  - Training duration: 3.6 seconds
+
+Validation Results:
+  - Normal points: 931,340 (99.10%)
+  - Anomalies: 8,459 (0.90%)
+  - Score range: [-0.0695, 0.2085]
+
+Feature Categories (NO TIME-BASED FEATURES):
+  - Row averages: 6
+  - Side averages: 3
+  - Row gradients: 4
+  - Side differences: 4
+  - TC position averages: 8
+  - Temperature variability: 8
+  - Row ranges: 6
+  - Heat flux efficiency: 2
+  - Symmetry features: 6
+  - Hotspot detection: 6
+  - Cooling efficiency: 2
+
+NOTE: Rolling means and rate-of-change features were NOT included
+      because data has gaps from noise filtering.
+
+Feature List:
+  1. CASTING SPEED
+  2. WIDTH TOP OF COPPER
+  3. WIDTH BOTTOM OF COPPER
+  4. TAPER LEFT SIDE
+  5. TAPER RIGHT SIDE
+  6. MMS FIX SIDE ROW1 TC1
+  7. MMS FIX SIDE ROW1 TC2
+  8. MMS FIX SIDE ROW1 TC3
+  9. MMS FIX SIDE ROW1 TC4
+  10. MMS FIX SIDE ROW1 TC5
+  11. MMS FIX SIDE ROW1 TC6
+  12. MMS FIX SIDE ROW1 TC7
+  13. MMS FIX SIDE ROW1 TC8
+  14. MMS FIX SIDE ROW2 TC1
+  15. MMS FIX SIDE ROW2 TC2
+  16. MMS FIX SIDE ROW2 TC3
+  17. MMS FIX SIDE ROW2 TC4
+  18. MMS FIX SIDE ROW2 TC5
+  19. MMS FIX SIDE ROW2 TC6
+  20. MMS FIX SIDE ROW2 TC7
+  21. MMS FIX SIDE ROW2 TC8
+  22. MMS FIX SIDE ROW3 TC1
+  23. MMS FIX SIDE ROW3 TC2
+  24. MMS FIX SIDE ROW3 TC3
+  25. MMS FIX SIDE ROW3 TC4
+  26. MMS FIX SIDE ROW3 TC5
+  27. MMS FIX SIDE ROW3 TC6
+  28. MMS FIX SIDE ROW3 TC7
+  29. MMS FIX SIDE ROW3 TC8
+  30. MMS LOOSE SIDE ROW1 TC1
+  31. MMS LOOSE SIDE ROW1 TC2
+  32. MMS LOOSE SIDE ROW1 TC3
+  33. MMS LOOSE SIDE ROW1 TC4
+  34. MMS LOOSE SIDE ROW1 TC5
+  35. MMS LOOSE SIDE ROW1 TC6
+  36. MMS LOOSE SIDE ROW1 TC7
+  37. MMS LOOSE SIDE ROW1 TC8
+  38. MMS LOOSE SIDE ROW2 TC1
+  39. MMS LOOSE SIDE ROW2 TC2
+  40. MMS LOOSE SIDE ROW2 TC3
+  41. MMS LOOSE SIDE ROW2 TC4
+  42. MMS LOOSE SIDE ROW2 TC5
+  43. MMS LOOSE SIDE ROW2 TC6
+  44. MMS LOOSE SIDE ROW2 TC7
+  45. MMS LOOSE SIDE ROW2 TC8
+  46. MMS LOOSE SIDE ROW3 TC1
+  47. MMS LOOSE SIDE ROW3 TC2
+  48. MMS LOOSE SIDE ROW3 TC3
+  49. MMS LOOSE SIDE ROW3 TC4
+  50. MMS LOOSE SIDE ROW3 TC5
+  51. MMS LOOSE SIDE ROW3 TC6
+  52. MMS LOOSE SIDE ROW3 TC7
+  53. MMS LOOSE SIDE ROW3 TC8
+  54. MOLD COOL WATER FIX SIDE HEAT FLUX
+  55. MOLD COOL WATER LOOSE SIDE HEAT FLUX
+  56. MOLD COOL WATER NARROW SIDE EAST HEAT FLUX
+  57. MOLD COOL WATER NARROW SIDE WEST HEAT FLUX
+  58. MOLD COOL WATER FIX SIDE FLOW
+  59. MOLD COOL WATER LOOSE SIDE FLOW
+  60. MOLD COOL WATER NARROW EAST SIDE FLOW
+  61. MOLD COOL WATER NARROW WEST SIDE FLOW
+  62. MOLD COOL WATER INLET TEMP
+  63. DRIVE CURRENT PINCH ROLL1 LOOSE SIDE
+  64. DRIVE CURRENT PINCH ROLL2 FIX SIDE
+  65. DRIVE CURRENT DUMMY BAR
+  66. DRIVE CURRENT PINCH ROLL1 FIX SIDE
+  67. DRIVE CURRENT PINCH ROLL2 LOOSE SIDE
+  68. DRIVE CURRENT WIDTHRAWAL STRAIGHTNER ROLL 2
+  69. DRIVE CURRENT WIDTHRAWAL STRAIGHTNER ROLL 3
+  70. DRIVE CURRENT WIDTHRAWAL STRAIGHTNER ROLL 4
+  71. CAR 1 TUNDISH TEMP
+  72. MOULD LEVEL ACTUAL
+  73. STOPPER ROD POSITION
+  74. TUNDISH WEIGHT
+  75. EMBR CURRENT ACTUAL
+  76. SEN POSITION AT CASTING
+  77. Fix_Row1_Avg
+  78. Fix_Row2_Avg
+  79. Fix_Row3_Avg
+  80. Loose_Row1_Avg
+  81. Loose_Row2_Avg
+  82. Loose_Row3_Avg
+  83. Fix_Side_Avg
+  84. Loose_Side_Avg
+  85. Overall_TC_Avg
+  86. Fix_Row1_Row2_Gradient
+  87. Fix_Row2_Row3_Gradient
+  88. Loose_Row1_Row2_Gradient
+  89. Loose_Row2_Row3_Gradient
+  90. Fix_Loose_Diff
+  91. Fix_Loose_Row1_Diff
+  92. Fix_Loose_Row2_Diff
+  93. Fix_Loose_Row3_Diff
+  94. TC1_Position_Avg
+  95. TC2_Position_Avg
+  96. TC3_Position_Avg
+  97. TC4_Position_Avg
+  98. TC5_Position_Avg
+  99. TC6_Position_Avg
+  100. TC7_Position_Avg
+  101. TC8_Position_Avg
+  102. Fix_Side_Std
+  103. Loose_Side_Std
+  104. Fix_Row1_Std
+  105. Fix_Row2_Std
+  106. Fix_Row3_Std
+  107. Loose_Row1_Std
+  108. Loose_Row2_Std
+  109. Loose_Row3_Std
+  110. Fix_Row1_Range
+  111. Fix_Row2_Range
+  112. Fix_Row3_Range
+  113. Loose_Row1_Range
+  114. Loose_Row2_Range
+  115. Loose_Row3_Range
+  116. Fix_Edge_Avg
+  117. Fix_Center_Avg
+  118. Fix_Edge_Center_Diff
+  119. Loose_Edge_Avg
+  120. Loose_Center_Avg
+  121. Loose_Edge_Center_Diff
+  122. Fix_Row1_Max_Diff
+  123. Fix_Row2_Max_Diff
+  124. Fix_Row3_Max_Diff
+  125. Loose_Row1_Max_Diff
+  126. Loose_Row2_Max_Diff
+  127. Loose_Row3_Max_Diff
