@@ -38,7 +38,7 @@ st.markdown("""
         font-weight: bold;
         color: #1f77b4;
         text-align: center;
-        padding: 0.25rem 0.5rem;
+        padding: 0.50rem 0.5rem;
         background: linear-gradient(90deg, #f0f2f6 0%, #ffffff 100%);
         border-radius: 8px;
         margin-bottom: 0.15rem;
