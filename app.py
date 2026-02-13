@@ -491,16 +491,16 @@ def main():
         critical_alerts = [a for a in current_alerts if a['severity'] == 'critical']
 
         with m1:
-        ic = "🟢" if score > 0 else "🔴"
-        st.metric(f"{ic} Anomaly Score", f"{score:.4f}", delta="Normal" if prediction == 1 else "ANOMALY")
-    
-        # ---- Compact gauge under metric ----
-        min_s, max_s = -0.3, 0.3
-        # Clamp and normalize to 0..100 for the bar position
-        clamped = max(min(score, max_s), min_s)
-        pos_pct = (clamped - min_s) / (max_s - min_s) * 100.0
-        rating = "Bad" if score < 0 else "Good"
-        col = "#d32f2f" if rating == "Bad" else "#2e7d32"
+            ic = "🟢" if score > 0 else "🔴"
+            st.metric(f"{ic} Anomaly Score", f"{score:.4f}", delta="Normal" if prediction == 1 else "ANOMALY")
+        
+            # ---- Compact gauge under metric ----
+            min_s, max_s = -0.3, 0.3
+            # Clamp and normalize to 0..100 for the bar position
+            clamped = max(min(score, max_s), min_s)
+            pos_pct = (clamped - min_s) / (max_s - min_s) * 100.0
+            rating = "Bad" if score < 0 else "Good"
+            col = "#d32f2f" if rating == "Bad" else "#2e7d32"
     
         st.markdown(
             f"""
