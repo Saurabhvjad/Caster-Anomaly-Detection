@@ -97,11 +97,16 @@ st.markdown("""
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-DATA_DIR = r"D:\Codes\Python\Caster Anomaly Detection"
-SAMPLE_DATA_FILE = os.path.join(DATA_DIR, "Sample Data_Good&Bad.xlsx")
-MODEL_FILE = os.path.join(DATA_DIR, "caster_isolation_forest_model.pkl")
-SCALER_FILE = os.path.join(DATA_DIR, "caster_scaler.pkl")
-FEATURES_FILE = os.path.join(DATA_DIR, "feature_names.pkl")
+
+from pathlib import Path
+
+# Directory containing this script (app.py)
+BASE_DIR = Path(__file__).resolve().parent
+
+SAMPLE_DATA_FILE = BASE_DIR / "Sample Data_Good&Bad.xlsx"
+MODEL_FILE       = BASE_DIR / "caster_isolation_forest_model.pkl"
+SCALER_FILE      = BASE_DIR / "caster_scaler.pkl"
+FEATURES_FILE    = BASE_DIR / "feature_names.pkl"
 
 # ============================================================================
 # HELPER FUNCTIONS
