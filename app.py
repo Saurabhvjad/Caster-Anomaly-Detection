@@ -18,6 +18,8 @@ import time
 import streamlit.components.v1 as components
 
 
+# Hide Streamlit default top-right menu & footer
+hide_default_format = """
 <style>
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
@@ -25,6 +27,7 @@ header {visibility: hidden;} /* hides title space if any */
 </style>
 """
 st.markdown(hide_default_format, unsafe_allow_html=True)
+
 
 
 # ============================================================================
