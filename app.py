@@ -491,30 +491,30 @@ def main():
         critical_alerts = [a for a in current_alerts if a['severity'] == 'critical']
 
         with m1:
-    ic = "🟢" if score > 0 else "🔴"
-    st.metric(f"{ic} Anomaly Score", f"{score:.4f}", delta="Normal" if prediction == 1 else "ANOMALY")
-
-    # ---- Compact gauge under metric ----
-    min_s, max_s = -0.3, 0.3
-    # Clamp and normalize to 0..100 for the bar position
-    clamped = max(min(score, max_s), min_s)
-    pos_pct = (clamped - min_s) / (max_s - min_s) * 100.0
-    rating = "Bad" if score < 0 else "Good"
-    col = "#d32f2f" if rating == "Bad" else "#2e7d32"
-
-    st.markdown(
-        f"""
-        <div style="font-size:0.72rem;margin-top:-0.4rem;color:#555;">Range: <b>-0.3 … 0.3</b> &nbsp;|&nbsp; Rating: 
-            <span style="font-weight:600;color:{col}">{rating}</span>
-        </div>
-        <div style="position:relative;height:8px;margin-top:4px;background:#eee;border-radius:6px;">
-            <div style="position:absolute;left:0;top:0;height:8px;width:{pos_pct:.2f}%;background:{col};border-radius:6px;"></div>
-            <!-- center marker at 0 -->
-            <div style="position:absolute;left:50%;top:-2px;width:2px;height:12px;background:#999;border-radius:1px;"></div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+        ic = "🟢" if score > 0 else "🔴"
+        st.metric(f"{ic} Anomaly Score", f"{score:.4f}", delta="Normal" if prediction == 1 else "ANOMALY")
+    
+        # ---- Compact gauge under metric ----
+        min_s, max_s = -0.3, 0.3
+        # Clamp and normalize to 0..100 for the bar position
+        clamped = max(min(score, max_s), min_s)
+        pos_pct = (clamped - min_s) / (max_s - min_s) * 100.0
+        rating = "Bad" if score < 0 else "Good"
+        col = "#d32f2f" if rating == "Bad" else "#2e7d32"
+    
+        st.markdown(
+            f"""
+            <div style="font-size:0.72rem;margin-top:-0.4rem;color:#555;">Range: <b>-0.3 … 0.3</b> &nbsp;|&nbsp; Rating: 
+                <span style="font-weight:600;color:{col}">{rating}</span>
+            </div>
+            <div style="position:relative;height:8px;margin-top:4px;background:#eee;border-radius:6px;">
+                <div style="position:absolute;left:0;top:0;height:8px;width:{pos_pct:.2f}%;background:{col};border-radius:6px;"></div>
+                <!-- center marker at 0 -->
+                <div style="position:absolute;left:50%;top:-2px;width:2px;height:12px;background:#999;border-radius:1px;"></div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
     
     # ---- JS injection to make sticky container work reliably ----
