@@ -17,6 +17,16 @@ from sklearn.preprocessing import StandardScaler
 import time
 import streamlit.components.v1 as components
 
+
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;} /* hides title space if any */
+</style>
+"""
+st.markdown(hide_default_format, unsafe_allow_html=True)
+
+
 # ============================================================================
 # PAGE CONFIGURATION
 # ============================================================================
