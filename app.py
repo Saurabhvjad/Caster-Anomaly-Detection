@@ -490,6 +490,7 @@ def main():
         current_alerts = check_rules(df, current_idx, tc_groups)
         critical_alerts = [a for a in current_alerts if a['severity'] == 'critical']
 
+        m1, m2, m3, m4, m5 = st.columns(5)
         with m1:
             ic = "🟢" if score > 0 else "🔴"
             st.metric(f"{ic} Anomaly Score", f"{score:.4f}", delta="Normal" if prediction == 1 else "ANOMALY")
