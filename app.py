@@ -438,6 +438,8 @@ def main():
         st.session_state.play_r3_alerts = 0
     if 'play_r4_alerts' not in st.session_state:
         st.session_state.play_r4_alerts = 0
+    if 'prev_active_alerts' not in st.session_state:
+        st.session_state.prev_active_alerts = set()
 
     # ====================================================================
     # STICKY TOP SECTION  (Header + Controls + Timeline)
@@ -501,6 +503,8 @@ def main():
                     st.session_state.play_r2_alerts = 0
                     st.session_state.play_r3_alerts = 0
                     st.session_state.play_r4_alerts = 0
+                    st.session_state.prev_active_alerts = set()
+                    st.session_state.alert_log = []
                 st.rerun()
 
         with speed_col:
@@ -570,9 +574,20 @@ def main():
                         })
 
         # Accumulate alerts during play (total + per-rule) and log them
-        if st.session_state.playing and critical_alerts:
-            st.session_state.play_total_alerts += len(critical_alerts)
+        # Consecutive-burst dedup: only count when a (rule, tc) combo NEWLY appears
+        if st.session_state.playing:
+            _current_keys = set()
             for _a in critical_alerts:
+                _k = (_a['rule'], _a.get('tc', ''), _a.get('parameter', ''))
+                _current_keys.add(_k)
+            # New alerts = present now but were NOT in previous frame
+            _new_keys = _current_keys - st.session_state.prev_active_alerts
+            for _a in critical_alerts:
+                _k = (_a['rule'], _a.get('tc', ''), _a.get('parameter', ''))
+                if _k not in _new_keys:
+                    continue
+                _new_keys.discard(_k)  # only log first match per key
+                st.session_state.play_total_alerts += 1
                 if _a['rule'] == 'Rule 1':
                     st.session_state.play_r1_alerts += 1
                 elif _a['rule'] == 'Rule 2':
@@ -581,8 +596,8 @@ def main():
                     st.session_state.play_r3_alerts += 1
                 elif _a['rule'] == 'Rule 4':
                     st.session_state.play_r4_alerts += 1
-            # Log enriched alerts into session alert_log
-            st.session_state.alert_log.extend(critical_alerts)
+                st.session_state.alert_log.append(_a)
+            st.session_state.prev_active_alerts = _current_keys
 
         m1, m2, m3, m4, m5 = st.columns(5)
         with m1:
@@ -966,7 +981,39 @@ def main():
     if st.session_state.playing:
         step_size = st.session_state.speed_multiplier
         play_end_idx = min(st.session_state.play_start_idx + st.session_state.time_window, total_rows - 1)
-        next_idx = st.session_state.current_idx + step_size
+        next_idx = min(st.session_state.current_idx + step_size, play_end_idx)
+
+        # Scan ALL intermediate rows for alerts so none are missed at high speed
+        # Use consecutive-burst dedup: track prev_active per scanned row
+        scan_start = st.session_state.current_idx + 1
+        scan_end = next_idx  # inclusive
+        for _scan_idx in range(scan_start, scan_end + 1):
+            if _scan_idx >= total_rows:
+                break
+            _scan_alerts = check_rules(df, _scan_idx, tc_groups)
+            _scan_critical = [a for a in _scan_alerts if a['severity'] == 'critical']
+            _scan_keys = set()
+            for _a in _scan_critical:
+                _dk = (_a['rule'], _a.get('tc', ''), _a.get('parameter', ''))
+                _scan_keys.add(_dk)
+            _new_scan = _scan_keys - st.session_state.prev_active_alerts
+            for _a in _scan_critical:
+                _dk = (_a['rule'], _a.get('tc', ''), _a.get('parameter', ''))
+                if _dk not in _new_scan:
+                    continue
+                _new_scan.discard(_dk)
+                st.session_state.play_total_alerts += 1
+                if _a['rule'] == 'Rule 1':
+                    st.session_state.play_r1_alerts += 1
+                elif _a['rule'] == 'Rule 2':
+                    st.session_state.play_r2_alerts += 1
+                elif _a['rule'] == 'Rule 3':
+                    st.session_state.play_r3_alerts += 1
+                elif _a['rule'] == 'Rule 4':
+                    st.session_state.play_r4_alerts += 1
+                st.session_state.alert_log.append(_a)
+            st.session_state.prev_active_alerts = _scan_keys
+
         if next_idx >= play_end_idx:
             st.session_state.playing = False
             st.session_state.current_idx = play_end_idx
