@@ -456,10 +456,10 @@ def main():
         with ctrl_left:
             st.markdown(
                 '<div class="rule-strip">'
-                '<b style="color:#d62728">R1</b>: ≥15°C in 2 min &nbsp;│&nbsp; '
-                '<b style="color:#ff7f0e">R2</b>: ≥15°C from median &nbsp;│&nbsp; '
-                '<b style="color:#9467bd">R3</b>: ≥6σ spike &nbsp;│&nbsp; '
-                '<b style="color:#17a2b8">R4</b>: SHAP score<-0.20'
+                '<b style="color:#d62728">R1</b>: ≥ 15°C in 2 min &nbsp;│&nbsp; '
+                '<b style="color:#ff7f0e">R2</b>: ≥ 15°C from median &nbsp;│&nbsp; '
+                '<b style="color:#9467bd">R3</b>: ≥ 6σ spike &nbsp;│&nbsp; '
+                '<b style="color:#17a2b8">R4</b>: SHAP <-0.20'
                 '</div>',
                 unsafe_allow_html=True
             )
@@ -535,43 +535,7 @@ def main():
         current_alerts = check_rules(df, current_idx, tc_groups)
         critical_alerts = [a for a in current_alerts if a['severity'] == 'critical']
 
-        # ---- Rule 4: SHAP-based anomaly alerts ----
-        if prediction == -1:  # model flags anomaly
-            _shap_df = get_shap_explanation(current_row, model, scaler, feature_names)
-            if _shap_df is not None:
-                _row_time = ''
-                if 'TIME' in df.columns and pd.notna(current_row.get('TIME')):
-                    _rt = current_row['TIME']
-                    _row_time = _rt.strftime('%H:%M:%S') if hasattr(_rt, 'strftime') else str(_rt).split('.')[0]
-                for _, _sf in _shap_df.iterrows():
-                    if _sf['SHAP'] < -0.20:
-                        _feat = _sf['Feature']
-                        _sval = _sf['SHAP']
-                        _fval = _sf['Value']
-                        if 'Gradient' in _feat or 'Diff' in _feat:
-                            _r4_action = 'Check thermal uniformity; reduce casting speed'
-                        elif 'Std' in _feat or 'Range' in _feat:
-                            _r4_action = 'Inspect mold for uneven wear'
-                        elif 'Heat_Flux' in _feat or 'Flow' in _feat:
-                            _r4_action = 'Verify cooling water flow rate'
-                        elif 'Edge' in _feat or 'Center' in _feat:
-                            _r4_action = 'Check nozzle alignment; adjust spray pattern'
-                        else:
-                            _r4_action = 'Reduce casting speed; monitor closely'
-                        critical_alerts.append({
-                            'rule': 'Rule 4',
-                            'severity': 'critical',
-                            'message': f"{_feat}: SHAP {_sval:+.3f}",
-                            'parameter': _feat,
-                            'value': _sval,
-                            'index': current_idx,
-                            'time': _row_time,
-                            'tc': _feat,
-                            'description': f"{_feat} (SHAP {_sval:+.3f}) driving anomaly",
-                            'actual_value': f"{_fval:.2f}",
-                            'compared_with': f"SHAP {_sval:+.4f}",
-                            'action': _r4_action
-                        })
+        # (R4 alerts are generated later after SHAP computation in Section 7)
 
         # Accumulate alerts during play (total + per-rule) and log them
         # Consecutive-burst dedup: only count when a (rule, tc) combo NEWLY appears
@@ -597,7 +561,9 @@ def main():
                 elif _a['rule'] == 'Rule 4':
                     st.session_state.play_r4_alerts += 1
                 st.session_state.alert_log.append(_a)
-            st.session_state.prev_active_alerts = _current_keys
+            # Keep R4 keys from previous frame so R4 dedup works
+            _prev_r4_keys = {k for k in st.session_state.prev_active_alerts if k[0] == 'Rule 4'}
+            st.session_state.prev_active_alerts = _current_keys | _prev_r4_keys
 
         m1, m2, m3, m4, m5 = st.columns(5)
         with m1:
@@ -887,12 +853,12 @@ def main():
             col_idx += 1
 
     # ====================================================================
-    # 7. SHAP EXPLANATION  (skipped during playback for smoother transitions)
+    # 7. SHAP EXPLANATION  (chart hidden during playback, values still used)
     # ====================================================================
+    shap_df = get_shap_explanation(current_row, model, scaler, feature_names)
+
     if not st.session_state.playing:
         st.markdown("### 🔍 SHAP Explanation – Why Anomalous?")
-
-        shap_df = get_shap_explanation(current_row, model, scaler, feature_names)
 
         if shap_df is not None:
             fig = go.Figure()
@@ -915,7 +881,68 @@ def main():
         else:
             st.warning("SHAP explanation not available (missing data)")
     else:
-        st.markdown("<small><i>SHAP explanation paused during playback</i></small>", unsafe_allow_html=True)
+        # During playback: show compact primary contributor only
+        if shap_df is not None and len(shap_df) > 0:
+            top_feature = shap_df.iloc[0]
+            if abs(top_feature['SHAP']) > 0.01:
+                st.markdown(
+                    f'<div style="font-size:0.8rem;padding:2px 8px;background:#fff3cd;border-radius:4px;">'
+                    f'🎯 <b>Primary Contributor</b>: {top_feature["Feature"]} = {top_feature["Value"]:.1f} '
+                    f'(SHAP: {top_feature["SHAP"]:+.3f})</div>',
+                    unsafe_allow_html=True
+                )
+
+    # ---- Rule 4: SHAP-based anomaly alerts (uses shap_df computed above) ----
+    if shap_df is not None:
+        _row_time = ''
+        if 'TIME' in df.columns and pd.notna(current_row.get('TIME')):
+            _rt = current_row['TIME']
+            _row_time = _rt.strftime('%H:%M:%S') if hasattr(_rt, 'strftime') else str(_rt).split('.')[0]
+        _r4_current_keys = set()
+        for _, _sf in shap_df.iterrows():
+            if _sf['SHAP'] < -0.20:
+                _feat = _sf['Feature']
+                _sval = _sf['SHAP']
+                _fval = _sf['Value']
+                if 'Gradient' in _feat or 'Diff' in _feat:
+                    _r4_action = 'Check thermal uniformity; reduce casting speed'
+                elif 'Std' in _feat or 'Range' in _feat:
+                    _r4_action = 'Inspect mold for uneven wear'
+                elif 'Heat_Flux' in _feat or 'Flow' in _feat:
+                    _r4_action = 'Verify cooling water flow rate'
+                elif 'Edge' in _feat or 'Center' in _feat:
+                    _r4_action = 'Check nozzle alignment; adjust spray pattern'
+                else:
+                    _r4_action = 'Reduce casting speed; monitor closely'
+                _r4_alert = {
+                    'rule': 'Rule 4',
+                    'severity': 'critical',
+                    'message': f"{_feat}: SHAP {_sval:+.3f}",
+                    'parameter': _feat,
+                    'value': _sval,
+                    'index': current_idx,
+                    'time': _row_time,
+                    'tc': _feat,
+                    'description': f"{_feat} (SHAP {_sval:+.3f}) driving anomaly",
+                    'actual_value': f"{_fval:.2f}",
+                    'compared_with': f"SHAP {_sval:+.4f}",
+                    'action': _r4_action
+                }
+                critical_alerts.append(_r4_alert)
+                _r4_key = ('Rule 4', _feat, _feat)
+                _r4_current_keys.add(_r4_key)
+                # Log R4 during playback with consecutive-burst dedup
+                if st.session_state.playing:
+                    if _r4_key not in st.session_state.prev_active_alerts:
+                        st.session_state.play_total_alerts += 1
+                        st.session_state.play_r4_alerts += 1
+                        st.session_state.alert_log.append(_r4_alert)
+        # Update prev_active_alerts: remove old R4 keys, add current R4 keys
+        if st.session_state.playing:
+            st.session_state.prev_active_alerts = (
+                (st.session_state.prev_active_alerts - {k for k in st.session_state.prev_active_alerts if k[0] == 'Rule 4'})
+                | _r4_current_keys
+            )
 
     # ====================================================================
     # 8. ALERT HISTORY LOG  (below everything)
@@ -990,8 +1017,47 @@ def main():
         for _scan_idx in range(scan_start, scan_end + 1):
             if _scan_idx >= total_rows:
                 break
+            _scan_row = df.iloc[_scan_idx]
+
+            # R1-R3 alerts
             _scan_alerts = check_rules(df, _scan_idx, tc_groups)
             _scan_critical = [a for a in _scan_alerts if a['severity'] == 'critical']
+
+            # R4 SHAP alerts for intermediate rows
+            _scan_shap = get_shap_explanation(_scan_row, model, scaler, feature_names)
+            if _scan_shap is not None:
+                _scan_time = ''
+                if 'TIME' in df.columns and pd.notna(_scan_row.get('TIME')):
+                    _srt = _scan_row['TIME']
+                    _scan_time = _srt.strftime('%H:%M:%S') if hasattr(_srt, 'strftime') else str(_srt).split('.')[0]
+                for _, _sf in _scan_shap.iterrows():
+                    if _sf['SHAP'] < -0.20:
+                        _feat = _sf['Feature']
+                        _sval = _sf['SHAP']
+                        _fval = _sf['Value']
+                        if 'Gradient' in _feat or 'Diff' in _feat:
+                            _r4a = 'Check thermal uniformity; reduce casting speed'
+                        elif 'Std' in _feat or 'Range' in _feat:
+                            _r4a = 'Inspect mold for uneven wear'
+                        elif 'Heat_Flux' in _feat or 'Flow' in _feat:
+                            _r4a = 'Verify cooling water flow rate'
+                        elif 'Edge' in _feat or 'Center' in _feat:
+                            _r4a = 'Check nozzle alignment; adjust spray pattern'
+                        else:
+                            _r4a = 'Reduce casting speed; monitor closely'
+                        _scan_critical.append({
+                            'rule': 'Rule 4', 'severity': 'critical',
+                            'message': f"{_feat}: SHAP {_sval:+.3f}",
+                            'parameter': _feat, 'value': _sval,
+                            'index': _scan_idx, 'time': _scan_time,
+                            'tc': _feat,
+                            'description': f"{_feat} (SHAP {_sval:+.3f}) driving anomaly",
+                            'actual_value': f"{_fval:.2f}",
+                            'compared_with': f"SHAP {_sval:+.4f}",
+                            'action': _r4a
+                        })
+
+            # Consecutive-burst dedup for all rules (R1-R4)
             _scan_keys = set()
             for _a in _scan_critical:
                 _dk = (_a['rule'], _a.get('tc', ''), _a.get('parameter', ''))
