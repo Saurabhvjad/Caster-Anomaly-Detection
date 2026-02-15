@@ -424,6 +424,8 @@ def main():
         st.session_state.alert_log = []
     if 'playing' not in st.session_state:
         st.session_state.playing = False
+    if 'play_start_idx' not in st.session_state:
+        st.session_state.play_start_idx = 0
     if 'speed_multiplier' not in st.session_state:
         st.session_state.speed_multiplier = 10
     if 'play_total_alerts' not in st.session_state:
@@ -490,6 +492,7 @@ def main():
                 st.session_state.playing = not st.session_state.playing
                 # Reset cumulative alert counter when starting a new play session
                 if st.session_state.playing:
+                    st.session_state.play_start_idx = st.session_state.current_idx
                     st.session_state.play_total_alerts = 0
                     st.session_state.play_r1_alerts = 0
                     st.session_state.play_r2_alerts = 0
@@ -545,15 +548,32 @@ def main():
                 _sc_color, _sc_icon, _sc_label = '#ffc107', '🟡', 'Borderline'
             else:
                 _sc_color, _sc_icon, _sc_label = '#dc3545', '🔴', 'ANOMALY'
+            # SVG scale: map score from [-0.3, 0.3] to [0, 100]%
+            _marker_pct = max(0, min(100, ((score + 0.3) / 0.6) * 100))
             st.markdown(
                 f'<div style="background:#f0f2f6;border-radius:8px;padding:0.35rem 0.5rem;border-left:4px solid {_sc_color};">'
                 f'<div style="font-size:0.72rem;color:#888;">{_sc_icon} Anomaly Score</div>'
                 f'<div style="font-size:1.15rem;font-weight:bold;color:{_sc_color};">{score:.4f}</div>'
-                f'<div style="font-size:0.65rem;color:#777;margin-top:1px;">'
-                f'<span style="color:#dc3545;">-0.3</span>'
-                f' ◄ <b style="color:{_sc_color}">{_sc_label}</b> ► '
-                f'<span style="color:#28a745;">+0.3</span></div>'
-                f'</div>',
+                f'<svg viewBox="0 0 200 38" style="width:100%;max-width:180px;height:38px;margin-top:2px;display:block;">'
+                # Gradient bar
+                f'<defs><linearGradient id="sg"><stop offset="0%" stop-color="#dc3545"/>'
+                f'<stop offset="50%" stop-color="#ffc107"/><stop offset="100%" stop-color="#28a745"/>'
+                f'</linearGradient></defs>'
+                f'<rect x="10" y="8" width="180" height="10" rx="5" fill="url(#sg)"/>'
+                # Tick marks at -0.3, 0, +0.3
+                f'<line x1="10" y1="6" x2="10" y2="20" stroke="#999" stroke-width="1"/>'
+                f'<line x1="100" y1="6" x2="100" y2="20" stroke="#999" stroke-width="1"/>'
+                f'<line x1="190" y1="6" x2="190" y2="20" stroke="#999" stroke-width="1"/>'
+                # Labels
+                f'<text x="10" y="32" font-size="8" fill="#dc3545" text-anchor="middle">-0.3</text>'
+                f'<text x="55" y="32" font-size="7.5" fill="#c0392b" text-anchor="middle">Bad</text>'
+                f'<text x="100" y="32" font-size="8" fill="#888" text-anchor="middle">0</text>'
+                f'<text x="145" y="32" font-size="7.5" fill="#27ae60" text-anchor="middle">Normal</text>'
+                f'<text x="190" y="32" font-size="8" fill="#28a745" text-anchor="middle">+0.3</text>'
+                # Marker triangle
+                f'<polygon points="{10 + _marker_pct * 1.8 - 5},6 {10 + _marker_pct * 1.8 + 5},6 '
+                f'{10 + _marker_pct * 1.8},1" fill="{_sc_color}" stroke="#333" stroke-width="0.5"/>'
+                f'</svg></div>',
                 unsafe_allow_html=True
             )
         with m2:
@@ -897,10 +917,11 @@ def main():
     # ====================================================================
     if st.session_state.playing:
         step_size = st.session_state.speed_multiplier
+        play_end_idx = min(st.session_state.play_start_idx + st.session_state.time_window, total_rows - 1)
         next_idx = st.session_state.current_idx + step_size
-        if next_idx >= total_rows:
+        if next_idx >= play_end_idx:
             st.session_state.playing = False
-            st.session_state.current_idx = total_rows - 1
+            st.session_state.current_idx = play_end_idx
         else:
             st.session_state.current_idx = next_idx
         time.sleep(0.1)
