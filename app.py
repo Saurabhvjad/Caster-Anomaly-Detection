@@ -436,6 +436,8 @@ def main():
         st.session_state.play_r2_alerts = 0
     if 'play_r3_alerts' not in st.session_state:
         st.session_state.play_r3_alerts = 0
+    if 'play_r4_alerts' not in st.session_state:
+        st.session_state.play_r4_alerts = 0
 
     # ====================================================================
     # STICKY TOP SECTION  (Header + Controls + Timeline)
@@ -452,9 +454,10 @@ def main():
         with ctrl_left:
             st.markdown(
                 '<div class="rule-strip">'
-                '<b style="color:#d62728">R1</b>: ≥15°C deviation in 2 min &nbsp;│&nbsp; '
-                '<b style="color:#ff7f0e">R2</b>: ≥15°C from own median &nbsp;│&nbsp; '
-                '<b style="color:#9467bd">R3</b>: ≥6σ from recent readings'
+                '<b style="color:#d62728">R1</b>: ≥15°C in 2 min &nbsp;│&nbsp; '
+                '<b style="color:#ff7f0e">R2</b>: ≥15°C from median &nbsp;│&nbsp; '
+                '<b style="color:#9467bd">R3</b>: ≥6σ spike &nbsp;│&nbsp; '
+                '<b style="color:#17a2b8">R4</b>: SHAP score<-0.20'
                 '</div>',
                 unsafe_allow_html=True
             )
@@ -497,6 +500,7 @@ def main():
                     st.session_state.play_r1_alerts = 0
                     st.session_state.play_r2_alerts = 0
                     st.session_state.play_r3_alerts = 0
+                    st.session_state.play_r4_alerts = 0
                 st.rerun()
 
         with speed_col:
@@ -527,6 +531,44 @@ def main():
         current_alerts = check_rules(df, current_idx, tc_groups)
         critical_alerts = [a for a in current_alerts if a['severity'] == 'critical']
 
+        # ---- Rule 4: SHAP-based anomaly alerts ----
+        if prediction == -1:  # model flags anomaly
+            _shap_df = get_shap_explanation(current_row, model, scaler, feature_names)
+            if _shap_df is not None:
+                _row_time = ''
+                if 'TIME' in df.columns and pd.notna(current_row.get('TIME')):
+                    _rt = current_row['TIME']
+                    _row_time = _rt.strftime('%H:%M:%S') if hasattr(_rt, 'strftime') else str(_rt).split('.')[0]
+                for _, _sf in _shap_df.iterrows():
+                    if _sf['SHAP'] < -0.20:
+                        _feat = _sf['Feature']
+                        _sval = _sf['SHAP']
+                        _fval = _sf['Value']
+                        if 'Gradient' in _feat or 'Diff' in _feat:
+                            _r4_action = 'Check thermal uniformity; reduce casting speed'
+                        elif 'Std' in _feat or 'Range' in _feat:
+                            _r4_action = 'Inspect mold for uneven wear'
+                        elif 'Heat_Flux' in _feat or 'Flow' in _feat:
+                            _r4_action = 'Verify cooling water flow rate'
+                        elif 'Edge' in _feat or 'Center' in _feat:
+                            _r4_action = 'Check nozzle alignment; adjust spray pattern'
+                        else:
+                            _r4_action = 'Reduce casting speed; monitor closely'
+                        critical_alerts.append({
+                            'rule': 'Rule 4',
+                            'severity': 'critical',
+                            'message': f"{_feat}: SHAP {_sval:+.3f}",
+                            'parameter': _feat,
+                            'value': _sval,
+                            'index': current_idx,
+                            'time': _row_time,
+                            'tc': _feat,
+                            'description': f"{_feat} (SHAP {_sval:+.3f}) driving anomaly",
+                            'actual_value': f"{_fval:.2f}",
+                            'compared_with': f"SHAP {_sval:+.4f}",
+                            'action': _r4_action
+                        })
+
         # Accumulate alerts during play (total + per-rule) and log them
         if st.session_state.playing and critical_alerts:
             st.session_state.play_total_alerts += len(critical_alerts)
@@ -537,6 +579,8 @@ def main():
                     st.session_state.play_r2_alerts += 1
                 elif _a['rule'] == 'Rule 3':
                     st.session_state.play_r3_alerts += 1
+                elif _a['rule'] == 'Rule 4':
+                    st.session_state.play_r4_alerts += 1
             # Log enriched alerts into session alert_log
             st.session_state.alert_log.extend(critical_alerts)
 
@@ -594,7 +638,8 @@ def main():
                 f'<div style="font-size:0.7rem;margin-top:2px;color:#555;">'
                 f'R1: <b>{st.session_state.play_r1_alerts}</b> &nbsp;│&nbsp; '
                 f'R2: <b>{st.session_state.play_r2_alerts}</b> &nbsp;│&nbsp; '
-                f'R3: <b>{st.session_state.play_r3_alerts}</b></div>'
+                f'R3: <b>{st.session_state.play_r3_alerts}</b> &nbsp;│&nbsp; '
+                f'R4: <b>{st.session_state.play_r4_alerts}</b></div>'
                 f'</div></a>',
                 unsafe_allow_html=True
             )
@@ -644,7 +689,7 @@ def main():
         '<div style="display:grid;grid-template-columns:repeat(3,1fr);'
         'grid-template-rows:repeat(2,auto);gap:4px;height:90px;overflow:hidden;">'
     )
-    _rule_colors = {'Rule 1': '#d62728', 'Rule 2': '#ff7f0e', 'Rule 3': '#9467bd'}
+    _rule_colors = {'Rule 1': '#d62728', 'Rule 2': '#ff7f0e', 'Rule 3': '#9467bd', 'Rule 4': '#17a2b8'}
     for i in range(6):
         if i < len(display_alerts):
             a = display_alerts[i]
@@ -870,6 +915,7 @@ def main():
             _r1c = len(log_df[log_df['rule'] == 'Rule 1']) if 'rule' in log_df.columns else 0
             _r2c = len(log_df[log_df['rule'] == 'Rule 2']) if 'rule' in log_df.columns else 0
             _r3c = len(log_df[log_df['rule'] == 'Rule 3']) if 'rule' in log_df.columns else 0
+            _r4c = len(log_df[log_df['rule'] == 'Rule 4']) if 'rule' in log_df.columns else 0
             st.markdown(
                 f'<div style="display:flex;gap:1rem;margin-bottom:0.4rem;font-size:0.82rem;">'
                 f'<span style="background:#fde8e8;padding:2px 10px;border-radius:4px;border-left:3px solid #d62728;">'
@@ -878,14 +924,16 @@ def main():
                 f'<b style="color:#ff7f0e">R2</b>: {_r2c}</span>'
                 f'<span style="background:#f3eefa;padding:2px 10px;border-radius:4px;border-left:3px solid #9467bd;">'
                 f'<b style="color:#9467bd">R3</b>: {_r3c}</span>'
+                f'<span style="background:#e8f4f8;padding:2px 10px;border-radius:4px;border-left:3px solid #17a2b8;">'
+                f'<b style="color:#17a2b8">R4</b>: {_r4c}</span>'
                 f'<span style="color:#888;">Total: <b>{len(log_df)}</b></span>'
                 f'</div>',
                 unsafe_allow_html=True
             )
 
             # Color-coded HTML table
-            _rule_bg = {'Rule 1': '#fde8e8', 'Rule 2': '#fff4e5', 'Rule 3': '#f3eefa'}
-            _rule_fg = {'Rule 1': '#d62728', 'Rule 2': '#ff7f0e', 'Rule 3': '#9467bd'}
+            _rule_bg = {'Rule 1': '#fde8e8', 'Rule 2': '#fff4e5', 'Rule 3': '#f3eefa', 'Rule 4': '#e8f4f8'}
+            _rule_fg = {'Rule 1': '#d62728', 'Rule 2': '#ff7f0e', 'Rule 3': '#9467bd', 'Rule 4': '#17a2b8'}
             display_cols = ['index', 'time', 'rule', 'tc', 'description', 'actual_value', 'compared_with', 'action']
             available_cols = [c for c in display_cols if c in log_df.columns]
             log_tail = log_df[available_cols].tail(50)
