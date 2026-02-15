@@ -238,10 +238,16 @@ def engineer_features(df, tc_groups):
     return df_features
 
 def check_rules(df, current_idx, tc_groups):
-    """Check the 3 priority rules"""
+    """Check the 3 priority rules. Returns enriched alert dicts."""
     alerts = []
+    current_row = df.iloc[current_idx]
+    if 'TIME' in df.columns and pd.notna(current_row.get('TIME')):
+        _t = current_row['TIME']
+        row_time = _t.strftime('%H:%M:%S') if hasattr(_t, 'strftime') else str(_t).split('.')[0]
+    else:
+        row_time = ''
 
-    # Rule 1: Deviation > 5°C in last 2 minutes (120 seconds)
+    # Rule 1: Deviation > 15°C in last 2 minutes (120 seconds)
     window_start = max(0, current_idx - 120)
     window_data = df.iloc[window_start:current_idx+1]
 
@@ -251,19 +257,24 @@ def check_rules(df, current_idx, tc_groups):
                 tc_values = window_data[tc].dropna()
                 if len(tc_values) > 1:
                     deviation = tc_values.iloc[-1] - tc_values.iloc[0]
-                    # Only critical alerts (>= 10°C deviation)
-                    # if abs(deviation) > 5:  # warning threshold
                     if abs(deviation) >= 15:
+                        _action = 'Reduce casting speed' if deviation > 0 else 'Check cooling water flow'
                         alerts.append({
                             'rule': 'Rule 1',
                             'severity': 'critical',
-                            'message': f"{tc}: {deviation:+.1f}°C deviation in last 2 min",
+                            'message': f"{tc}: {deviation:+.1f}°C in 2 min",
                             'parameter': tc,
-                            'value': deviation
+                            'value': deviation,
+                            'index': current_idx,
+                            'time': row_time,
+                            'tc': tc,
+                            'description': f"{tc} deviated {deviation:+.1f}°C over 2 min",
+                            'actual_value': f"{tc_values.iloc[-1]:.1f}°C",
+                            'compared_with': f"{tc_values.iloc[0]:.1f}°C (2 min ago)",
+                            'action': _action
                         })
 
     # Rule 2: TC current value difference > 10°C from its own recent median
-    current_row = df.iloc[current_idx]
     for row_name, row_cols in [
         ('Fix ROW1', tc_groups['fix_row1']),
         ('Fix ROW2', tc_groups['fix_row2']),
@@ -279,18 +290,24 @@ def check_rules(df, current_idx, tc_groups):
                 if len(tc_recent) > 0:
                     tc_median = tc_recent.median()
                     diff_from_tc_median = abs(current_row[tc] - tc_median)
-                    # Only critical alerts (>= 15°C from median)
-                    # if diff_from_tc_median > 10:  # warning threshold
                     if diff_from_tc_median >= 15:
+                        _action = 'Inspect mold condition; verify TC sensor' if diff_from_tc_median >= 25 else 'Monitor closely; adjust secondary cooling'
                         alerts.append({
                             'rule': 'Rule 2',
                             'severity': 'critical',
-                            'message': f"{tc}: {diff_from_tc_median:.1f}°C deviation from its median ({tc_median:.1f}°C)",
+                            'message': f"{tc}: {diff_from_tc_median:.1f}°C off median",
                             'parameter': tc,
-                            'value': diff_from_tc_median
+                            'value': diff_from_tc_median,
+                            'index': current_idx,
+                            'time': row_time,
+                            'tc': tc,
+                            'description': f"{tc} deviates {diff_from_tc_median:.1f}°C from median",
+                            'actual_value': f"{current_row[tc]:.1f}°C",
+                            'compared_with': f"{tc_median:.1f}°C (median)",
+                            'action': _action
                         })
 
-    # Rule 3: 2 std deviations from last reading
+    # Rule 3: >=6 std deviations from recent readings
     if current_idx > 0:
         prev_row = df.iloc[current_idx - 1]
         for tc in tc_groups['all']:
@@ -303,15 +320,21 @@ def check_rules(df, current_idx, tc_groups):
                         std_val = recent_data.std()
                         if std_val > 0:
                             z_score = abs((current_row[tc] - mean_val) / std_val)
-                            # Only critical alerts (>= 6σ)
-                            # if z_score > 5:  # warning threshold
                             if z_score >= 6:
+                                _action = 'Reduce casting speed; check breakout risk' if z_score >= 10 else 'Decrease casting speed gradually'
                                 alerts.append({
                                     'rule': 'Rule 3',
                                     'severity': 'critical',
-                                    'message': f"{tc}: {z_score:.1f}σ deviation from recent readings",
+                                    'message': f"{tc}: {z_score:.1f}σ spike",
                                     'parameter': tc,
-                                    'value': z_score
+                                    'value': z_score,
+                                    'index': current_idx,
+                                    'time': row_time,
+                                    'tc': tc,
+                                    'description': f"{tc} at {z_score:.1f}σ from recent mean",
+                                    'actual_value': f"{current_row[tc]:.1f}°C",
+                                    'compared_with': f"{mean_val:.1f}°C ± {std_val:.1f} (mean±std)",
+                                    'action': _action
                                 })
 
     return alerts
@@ -401,6 +424,8 @@ def main():
         st.session_state.alert_log = []
     if 'playing' not in st.session_state:
         st.session_state.playing = False
+    if 'speed_multiplier' not in st.session_state:
+        st.session_state.speed_multiplier = 10
     if 'play_total_alerts' not in st.session_state:
         st.session_state.play_total_alerts = 0
     if 'play_r1_alerts' not in st.session_state:
@@ -425,9 +450,9 @@ def main():
         with ctrl_left:
             st.markdown(
                 '<div class="rule-strip">'
-                '<b>R1</b>: &gt;5°C deviation in 2 min &nbsp;│&nbsp; '
-                '<b>R2</b>: &gt;10°C from own median &nbsp;│&nbsp; '
-                '<b>R3</b>: &gt;5σ from recent readings'
+                '<b style="color:#d62728">R1</b>: ≥15°C deviation in 2 min &nbsp;│&nbsp; '
+                '<b style="color:#ff7f0e">R2</b>: ≥15°C from own median &nbsp;│&nbsp; '
+                '<b style="color:#9467bd">R3</b>: ≥6σ from recent readings'
                 '</div>',
                 unsafe_allow_html=True
             )
@@ -440,8 +465,8 @@ def main():
                 label_visibility="collapsed"
             )
 
-        # ---- Timeline Navigation with Play button ----
-        slider_col, play_col = st.columns([11, 1])
+        # ---- Timeline Navigation with Play button + Speed selector ----
+        slider_col, play_col, speed_col = st.columns([10, 1, 1])
 
         # Build slider label that includes time
         time_label_str = ""
@@ -471,6 +496,15 @@ def main():
                     st.session_state.play_r3_alerts = 0
                 st.rerun()
 
+        with speed_col:
+            st.session_state.speed_multiplier = st.selectbox(
+                "Speed",
+                options=[1, 2, 5, 10, 20],
+                index=[1, 2, 5, 10, 20].index(st.session_state.speed_multiplier),
+                format_func=lambda x: f"{x}×",
+                label_visibility="collapsed"
+            )
+
         # Update index from slider
         if current_idx != st.session_state.current_idx:
             st.session_state.current_idx = current_idx
@@ -490,7 +524,7 @@ def main():
         current_alerts = check_rules(df, current_idx, tc_groups)
         critical_alerts = [a for a in current_alerts if a['severity'] == 'critical']
 
-        # Accumulate alerts during play (total + per-rule)
+        # Accumulate alerts during play (total + per-rule) and log them
         if st.session_state.playing and critical_alerts:
             st.session_state.play_total_alerts += len(critical_alerts)
             for _a in critical_alerts:
@@ -500,11 +534,28 @@ def main():
                     st.session_state.play_r2_alerts += 1
                 elif _a['rule'] == 'Rule 3':
                     st.session_state.play_r3_alerts += 1
+            # Log enriched alerts into session alert_log
+            st.session_state.alert_log.extend(critical_alerts)
 
         m1, m2, m3, m4, m5 = st.columns(5)
         with m1:
-            ic = "🟢" if score > 0 else "🔴"
-            st.metric(f"{ic} Anomaly Score", f"{score:.4f}", delta="Normal" if prediction == 1 else "ANOMALY")
+            if score > 0:
+                _sc_color, _sc_icon, _sc_label = '#28a745', '🟢', 'Normal'
+            elif score > -0.15:
+                _sc_color, _sc_icon, _sc_label = '#ffc107', '🟡', 'Borderline'
+            else:
+                _sc_color, _sc_icon, _sc_label = '#dc3545', '🔴', 'ANOMALY'
+            st.markdown(
+                f'<div style="background:#f0f2f6;border-radius:8px;padding:0.35rem 0.5rem;border-left:4px solid {_sc_color};">'
+                f'<div style="font-size:0.72rem;color:#888;">{_sc_icon} Anomaly Score</div>'
+                f'<div style="font-size:1.15rem;font-weight:bold;color:{_sc_color};">{score:.4f}</div>'
+                f'<div style="font-size:0.65rem;color:#777;margin-top:1px;">'
+                f'<span style="color:#dc3545;">-0.3</span>'
+                f' ◄ <b style="color:{_sc_color}">{_sc_label}</b> ► '
+                f'<span style="color:#28a745;">+0.3</span></div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
         with m2:
             st.metric("Overall Temp Median", f"{current_row['Overall_TC_Avg']:.1f}°C")
         with m3:
@@ -512,12 +563,19 @@ def main():
         with m4:
             st.metric("Active Alerts", len(critical_alerts), delta_color="inverse")
         with m5:
-            st.metric("▶ Session Alerts", st.session_state.play_total_alerts)
+            # Clickable session alerts — scrolls to alert-history-log anchor
             st.markdown(
-                f'<div style="font-size:0.7rem;margin-top:-0.5rem;color:#555;">'
+                f'<a href="#alert-history-log" style="text-decoration:none;color:inherit;">'
+                f'<div style="background:#f0f2f6;border-radius:8px;padding:0.4rem 0.5rem;'
+                f'border-left:4px solid #1f77b4;cursor:pointer;transition:background 0.2s;"'
+                f' onmouseover="this.style.background=&#39;#e0e4ea&#39;" onmouseout="this.style.background=&#39;#f0f2f6&#39;">'
+                f'<div style="font-size:0.72rem;color:#888;">▶ Session Alerts</div>'
+                f'<div style="font-size:1.1rem;font-weight:bold;">{st.session_state.play_total_alerts}</div>'
+                f'<div style="font-size:0.7rem;margin-top:2px;color:#555;">'
                 f'R1: <b>{st.session_state.play_r1_alerts}</b> &nbsp;│&nbsp; '
                 f'R2: <b>{st.session_state.play_r2_alerts}</b> &nbsp;│&nbsp; '
-                f'R3: <b>{st.session_state.play_r3_alerts}</b></div>',
+                f'R3: <b>{st.session_state.play_r3_alerts}</b></div>'
+                f'</div></a>',
                 unsafe_allow_html=True
             )
 
@@ -554,6 +612,7 @@ def main():
     window_end = min(total_rows, current_idx + half_window)
     window_df = df.iloc[window_start:window_end].copy()
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
+    _chart_config = {'displayModeBar': not st.session_state.playing}
 
     # ====================================================================
     # 2. ACTIVE ALERTS  (fixed 3×2 grid, critical only)
@@ -565,12 +624,17 @@ def main():
         '<div style="display:grid;grid-template-columns:repeat(3,1fr);'
         'grid-template-rows:repeat(2,auto);gap:4px;height:90px;overflow:hidden;">'
     )
+    _rule_colors = {'Rule 1': '#d62728', 'Rule 2': '#ff7f0e', 'Rule 3': '#9467bd'}
     for i in range(6):
         if i < len(display_alerts):
             a = display_alerts[i]
+            _rc = _rule_colors.get(a['rule'], '#dc3545')
+            _act = a.get('action', '')
             grid_html += (
-                f'<div class="alert-card alert-critical" style="margin:0;font-size:0.75rem;padding:0.2rem 0.4rem;">'
-                f'🔴 <b>{a["rule"]}</b>: {a["message"]}</div>'
+                f'<div style="background:#fff;border-left:4px solid {_rc};border-radius:5px;'
+                f'margin:0;font-size:0.73rem;padding:0.2rem 0.4rem;">'
+                f'<b style="color:{_rc}">{a["rule"]}</b> {a["tc"].split("TC")[-1] if "TC" in a.get("tc","") else ""}'
+                f'<br/><span style="color:#333;">⚡ {_act}</span></div>'
             )
         else:
             grid_html += (
@@ -591,14 +655,14 @@ def main():
         fig.add_trace(go.Scatter(x=window_df['TIME'], y=window_df['Overall_TC_Avg'], name='Overall Avg', line=dict(color='blue')))
         fig.add_vline(x=current_time, line_dash="dash", line_color="red")
         fig.update_layout(title="Overall TC Average", height=200, margin=dict(l=10, r=10, t=30, b=10), xaxis_title="Time")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=_chart_config)
 
     with kp2:
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=window_df['TIME'], y=window_df['Fix_Loose_Diff'], name='Fix-Loose Diff', line=dict(color='orange')))
         fig.add_vline(x=current_time, line_dash="dash", line_color="red")
         fig.update_layout(title="Fix-Loose Temp Diff", height=200, margin=dict(l=10, r=10, t=30, b=10), xaxis_title="Time")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config=_chart_config)
 
     with kp3:
         if 'CASTING SPEED' in window_df.columns:
@@ -606,7 +670,7 @@ def main():
             fig.add_trace(go.Scatter(x=window_df['TIME'], y=window_df['CASTING SPEED'], name='Speed', line=dict(color='green')))
             fig.add_vline(x=current_time, line_dash="dash", line_color="red")
             fig.update_layout(title="Casting Speed", height=200, margin=dict(l=10, r=10, t=30, b=10), xaxis_title="Time")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config=_chart_config)
 
     # ====================================================================
     # 4. THERMOCOUPLE TRENDS BY ROW  (compressed)
@@ -637,71 +701,48 @@ def main():
             html += '</div>'
             st.markdown(html, unsafe_allow_html=True)
 
-    # --- ROW 1 ---
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown('<small><b>Fix Side – ROW 1</b></small>', unsafe_allow_html=True)
-        fig = go.Figure()
-        for i, tc in enumerate(tc_groups['fix_row1']):
-            fig.add_trace(go.Scatter(x=window_df['TIME'], y=window_df[tc], name=f'TC{tc.split("TC")[-1]}', line=dict(color=colors[i % len(colors)])))
-        fig.add_vline(x=current_time, line_dash="dash", line_color="red")
-        fig.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="Time", yaxis_title="°C")
-        st.plotly_chart(fig, use_container_width=True)
-        display_row_parameters(tc_groups['fix_row1'], "Fix R1")
+    # --- Build all 3 rows as side-by-side subplot charts (Fix | Loose) ---
+    for row_num, (fix_key, loose_key, fix_label, loose_label) in enumerate([
+        ('fix_row1', 'loose_row1', 'Fix Side – ROW 1', 'Loose Side – ROW 1'),
+        ('fix_row2', 'loose_row2', 'Fix Side – ROW 2', 'Loose Side – ROW 2'),
+        ('fix_row3', 'loose_row3', 'Fix Side – ROW 3', 'Loose Side – ROW 3'),
+    ], start=1):
+        fig = make_subplots(rows=1, cols=2, subplot_titles=[fix_label, loose_label], horizontal_spacing=0.06)
 
-    with c2:
-        st.markdown('<small><b>Loose Side – ROW 1</b></small>', unsafe_allow_html=True)
-        fig = go.Figure()
-        for i, tc in enumerate(tc_groups['loose_row1']):
-            fig.add_trace(go.Scatter(x=window_df['TIME'], y=window_df[tc], name=f'TC{tc.split("TC")[-1]}', line=dict(color=colors[i % len(colors)])))
-        fig.add_vline(x=current_time, line_dash="dash", line_color="red")
-        fig.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="Time", yaxis_title="°C")
-        st.plotly_chart(fig, use_container_width=True)
-        display_row_parameters(tc_groups['loose_row1'], "Loose R1")
+        # Fix side traces
+        for i, tc in enumerate(tc_groups[fix_key]):
+            fig.add_trace(
+                go.Scatter(x=window_df['TIME'], y=window_df[tc],
+                           name=f'F-TC{tc.split("TC")[-1]}',
+                           line=dict(color=colors[i % len(colors)]),
+                           legendgroup=f'fix_r{row_num}', showlegend=True),
+                row=1, col=1
+            )
+        fig.add_vline(x=current_time, line_dash="dash", line_color="red", row=1, col=1)
 
-    # --- ROW 2 ---
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown('<small><b>Fix Side – ROW 2</b></small>', unsafe_allow_html=True)
-        fig = go.Figure()
-        for i, tc in enumerate(tc_groups['fix_row2']):
-            fig.add_trace(go.Scatter(x=window_df['TIME'], y=window_df[tc], name=f'TC{tc.split("TC")[-1]}', line=dict(color=colors[i % len(colors)])))
-        fig.add_vline(x=current_time, line_dash="dash", line_color="red")
-        fig.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="Time", yaxis_title="°C")
-        st.plotly_chart(fig, use_container_width=True)
-        display_row_parameters(tc_groups['fix_row2'], "Fix R2")
+        # Loose side traces
+        for i, tc in enumerate(tc_groups[loose_key]):
+            fig.add_trace(
+                go.Scatter(x=window_df['TIME'], y=window_df[tc],
+                           name=f'L-TC{tc.split("TC")[-1]}',
+                           line=dict(color=colors[i % len(colors)]),
+                           legendgroup=f'loose_r{row_num}', showlegend=True),
+                row=1, col=2
+            )
+        fig.add_vline(x=current_time, line_dash="dash", line_color="red", row=1, col=2)
 
-    with c2:
-        st.markdown('<small><b>Loose Side – ROW 2</b></small>', unsafe_allow_html=True)
-        fig = go.Figure()
-        for i, tc in enumerate(tc_groups['loose_row2']):
-            fig.add_trace(go.Scatter(x=window_df['TIME'], y=window_df[tc], name=f'TC{tc.split("TC")[-1]}', line=dict(color=colors[i % len(colors)])))
-        fig.add_vline(x=current_time, line_dash="dash", line_color="red")
-        fig.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="Time", yaxis_title="°C")
-        st.plotly_chart(fig, use_container_width=True)
-        display_row_parameters(tc_groups['loose_row2'], "Loose R2")
+        fig.update_layout(height=280, margin=dict(l=10, r=10, t=30, b=10))
+        fig.update_xaxes(title_text="Time", row=1, col=1)
+        fig.update_xaxes(title_text="Time", row=1, col=2)
+        fig.update_yaxes(title_text="°C", row=1, col=1)
+        st.plotly_chart(fig, use_container_width=True, config=_chart_config)
 
-    # --- ROW 3 ---
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown('<small><b>Fix Side – ROW 3</b></small>', unsafe_allow_html=True)
-        fig = go.Figure()
-        for i, tc in enumerate(tc_groups['fix_row3']):
-            fig.add_trace(go.Scatter(x=window_df['TIME'], y=window_df[tc], name=f'TC{tc.split("TC")[-1]}', line=dict(color=colors[i % len(colors)])))
-        fig.add_vline(x=current_time, line_dash="dash", line_color="red")
-        fig.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="Time", yaxis_title="°C")
-        st.plotly_chart(fig, use_container_width=True)
-        display_row_parameters(tc_groups['fix_row3'], "Fix R3")
-
-    with c2:
-        st.markdown('<small><b>Loose Side – ROW 3</b></small>', unsafe_allow_html=True)
-        fig = go.Figure()
-        for i, tc in enumerate(tc_groups['loose_row3']):
-            fig.add_trace(go.Scatter(x=window_df['TIME'], y=window_df[tc], name=f'TC{tc.split("TC")[-1]}', line=dict(color=colors[i % len(colors)])))
-        fig.add_vline(x=current_time, line_dash="dash", line_color="red")
-        fig.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="Time", yaxis_title="°C")
-        st.plotly_chart(fig, use_container_width=True)
-        display_row_parameters(tc_groups['loose_row3'], "Loose R3")
+        # Z-Score parameter strips below the subplot
+        zc1, zc2 = st.columns(2)
+        with zc1:
+            display_row_parameters(tc_groups[fix_key], f"Fix R{row_num}")
+        with zc2:
+            display_row_parameters(tc_groups[loose_key], f"Loose R{row_num}")
 
     # ====================================================================
     # 5. RULE 2 DEVIATION TABLE
@@ -799,25 +840,70 @@ def main():
     # ====================================================================
     # 8. ALERT HISTORY LOG  (below everything)
     # ====================================================================
-    with st.expander("📋 Alert History Log", expanded=False):
+    # Anchor for clickable session alerts to scroll to
+    st.markdown('<div id="alert-history-log"></div>', unsafe_allow_html=True)
+    with st.expander("📋 Alert History Log", expanded=True if st.session_state.alert_log else False):
         if st.session_state.alert_log:
-            st.dataframe(pd.DataFrame(st.session_state.alert_log).tail(20), use_container_width=True)
+            log_df = pd.DataFrame(st.session_state.alert_log)
+
+            # Rule breakup summary
+            _r1c = len(log_df[log_df['rule'] == 'Rule 1']) if 'rule' in log_df.columns else 0
+            _r2c = len(log_df[log_df['rule'] == 'Rule 2']) if 'rule' in log_df.columns else 0
+            _r3c = len(log_df[log_df['rule'] == 'Rule 3']) if 'rule' in log_df.columns else 0
+            st.markdown(
+                f'<div style="display:flex;gap:1rem;margin-bottom:0.4rem;font-size:0.82rem;">'
+                f'<span style="background:#fde8e8;padding:2px 10px;border-radius:4px;border-left:3px solid #d62728;">'
+                f'<b style="color:#d62728">R1</b>: {_r1c}</span>'
+                f'<span style="background:#fff4e5;padding:2px 10px;border-radius:4px;border-left:3px solid #ff7f0e;">'
+                f'<b style="color:#ff7f0e">R2</b>: {_r2c}</span>'
+                f'<span style="background:#f3eefa;padding:2px 10px;border-radius:4px;border-left:3px solid #9467bd;">'
+                f'<b style="color:#9467bd">R3</b>: {_r3c}</span>'
+                f'<span style="color:#888;">Total: <b>{len(log_df)}</b></span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+            # Color-coded HTML table
+            _rule_bg = {'Rule 1': '#fde8e8', 'Rule 2': '#fff4e5', 'Rule 3': '#f3eefa'}
+            _rule_fg = {'Rule 1': '#d62728', 'Rule 2': '#ff7f0e', 'Rule 3': '#9467bd'}
+            display_cols = ['index', 'time', 'rule', 'tc', 'description', 'actual_value', 'compared_with', 'action']
+            available_cols = [c for c in display_cols if c in log_df.columns]
+            log_tail = log_df[available_cols].tail(50)
+
+            tbl = ('<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">'
+                   '<thead><tr style="background:#f0f2f6;">')
+            col_labels = {'index': '#', 'time': 'Time', 'rule': 'Rule', 'tc': 'TC',
+                          'description': 'Description', 'actual_value': 'Actual',
+                          'compared_with': 'Compared With', 'action': 'Action'}
+            for c in available_cols:
+                tbl += f'<th style="padding:4px 6px;text-align:left;border-bottom:2px solid #ddd;">{col_labels.get(c, c)}</th>'
+            tbl += '</tr></thead><tbody>'
+            for _, row in log_tail.iterrows():
+                _bg = _rule_bg.get(row.get('rule', ''), '#fff')
+                _fg = _rule_fg.get(row.get('rule', ''), '#333')
+                tbl += f'<tr style="background:{_bg};border-bottom:1px solid #eee;">'
+                for c in available_cols:
+                    val = str(row.get(c, ''))
+                    style = f'color:{_fg};font-weight:bold;' if c == 'rule' else ''
+                    tbl += f'<td style="padding:3px 6px;{style}">{val}</td>'
+                tbl += '</tr>'
+            tbl += '</tbody></table>'
+            st.markdown(tbl, unsafe_allow_html=True)
         else:
-            st.info("No alerts logged yet")
+            st.info("No alerts logged yet. Press ▶ to start monitoring.")
 
     # ====================================================================
     # PLAY AUTO-ADVANCE  (runs AFTER full page renders)
     # ====================================================================
     if st.session_state.playing:
-        # 2 real seconds per 1 data-second: step 1 row, ~1.5s sleep + render overhead ≈ 2s
-        step_size = 1
+        step_size = st.session_state.speed_multiplier
         next_idx = st.session_state.current_idx + step_size
         if next_idx >= total_rows:
             st.session_state.playing = False
             st.session_state.current_idx = total_rows - 1
         else:
             st.session_state.current_idx = next_idx
-        time.sleep(1.5)
+        time.sleep(0.1)
         st.rerun()
 
 if __name__ == "__main__":
