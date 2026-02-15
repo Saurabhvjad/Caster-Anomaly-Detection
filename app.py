@@ -440,6 +440,8 @@ def main():
         st.session_state.play_r4_alerts = 0
     if 'prev_active_alerts' not in st.session_state:
         st.session_state.prev_active_alerts = set()
+    if 'r4_last_logged' not in st.session_state:
+        st.session_state.r4_last_logged = {}  # parameter -> last logged index
 
     # ====================================================================
     # STICKY TOP SECTION  (Header + Controls + Timeline)
@@ -504,6 +506,7 @@ def main():
                     st.session_state.play_r3_alerts = 0
                     st.session_state.play_r4_alerts = 0
                     st.session_state.prev_active_alerts = set()
+                    st.session_state.r4_last_logged = {}
                     st.session_state.alert_log = []
                 st.rerun()
 
@@ -534,36 +537,75 @@ def main():
         score, prediction = calculate_anomaly_score(current_row, model, scaler, feature_names)
         current_alerts = check_rules(df, current_idx, tc_groups)
         critical_alerts = [a for a in current_alerts if a['severity'] == 'critical']
-
-        # (R4 alerts are generated later after SHAP computation in Section 7)
+        # ---- Rule 4: SHAP-based anomaly alerts ----
+        shap_df = get_shap_explanation(current_row, model, scaler, feature_names)
+        if shap_df is not None:
+            _row_time = ''
+            if 'TIME' in df.columns and pd.notna(current_row.get('TIME')):
+                _rt = current_row['TIME']
+                _row_time = _rt.strftime('%H:%M:%S') if hasattr(_rt, 'strftime') else str(_rt).split('.')[0]
+            for _, _sf in shap_df.iterrows():
+                if _sf['SHAP'] < -0.20:
+                    _feat = _sf['Feature']
+                    _sval = _sf['SHAP']
+                    _fval = _sf['Value']
+                    if 'Gradient' in _feat or 'Diff' in _feat:
+                        _r4_action = 'Check thermal uniformity; reduce casting speed'
+                    elif 'Std' in _feat or 'Range' in _feat:
+                        _r4_action = 'Inspect mold for uneven wear'
+                    elif 'Heat_Flux' in _feat or 'Flow' in _feat:
+                        _r4_action = 'Verify cooling water flow rate'
+                    elif 'Edge' in _feat or 'Center' in _feat:
+                        _r4_action = 'Check nozzle alignment; adjust spray pattern'
+                    else:
+                        _r4_action = 'Reduce casting speed; monitor closely'
+                    critical_alerts.append({
+                        'rule': 'Rule 4', 'severity': 'critical',
+                        'message': f"{_feat}: SHAP {_sval:+.3f}",
+                        'parameter': _feat, 'value': _sval,
+                        'index': current_idx, 'time': _row_time,
+                        'tc': _feat,
+                        'description': f"{_feat} (SHAP {_sval:+.3f}) driving anomaly",
+                        'actual_value': f"{_fval:.2f}",
+                        'compared_with': f"SHAP {_sval:+.4f}",
+                        'action': _r4_action
+                    })
 
         # Accumulate alerts during play (total + per-rule) and log them
-        # Consecutive-burst dedup: only count when a (rule, tc) combo NEWLY appears
+        # R1-R3: consecutive-burst dedup.  R4: 60-second cooldown per parameter.
         if st.session_state.playing:
             _current_keys = set()
             for _a in critical_alerts:
                 _k = (_a['rule'], _a.get('tc', ''), _a.get('parameter', ''))
                 _current_keys.add(_k)
-            # New alerts = present now but were NOT in previous frame
+
+            # R1-R3: new = present now but NOT in previous frame
             _new_keys = _current_keys - st.session_state.prev_active_alerts
             for _a in critical_alerts:
                 _k = (_a['rule'], _a.get('tc', ''), _a.get('parameter', ''))
-                if _k not in _new_keys:
-                    continue
-                _new_keys.discard(_k)  # only log first match per key
-                st.session_state.play_total_alerts += 1
-                if _a['rule'] == 'Rule 1':
-                    st.session_state.play_r1_alerts += 1
-                elif _a['rule'] == 'Rule 2':
-                    st.session_state.play_r2_alerts += 1
-                elif _a['rule'] == 'Rule 3':
-                    st.session_state.play_r3_alerts += 1
-                elif _a['rule'] == 'Rule 4':
+                if _a['rule'] == 'Rule 4':
+                    # 60-second cooldown per parameter
+                    _param = _a.get('parameter', '')
+                    _last = st.session_state.r4_last_logged.get(_param, -9999)
+                    if current_idx - _last < 60:
+                        continue  # cooldown not elapsed
+                    st.session_state.r4_last_logged[_param] = current_idx
+                    st.session_state.play_total_alerts += 1
                     st.session_state.play_r4_alerts += 1
-                st.session_state.alert_log.append(_a)
-            # Keep R4 keys from previous frame so R4 dedup works
-            _prev_r4_keys = {k for k in st.session_state.prev_active_alerts if k[0] == 'Rule 4'}
-            st.session_state.prev_active_alerts = _current_keys | _prev_r4_keys
+                    st.session_state.alert_log.append(_a)
+                else:
+                    if _k not in _new_keys:
+                        continue
+                    _new_keys.discard(_k)
+                    st.session_state.play_total_alerts += 1
+                    if _a['rule'] == 'Rule 1':
+                        st.session_state.play_r1_alerts += 1
+                    elif _a['rule'] == 'Rule 2':
+                        st.session_state.play_r2_alerts += 1
+                    elif _a['rule'] == 'Rule 3':
+                        st.session_state.play_r3_alerts += 1
+                    st.session_state.alert_log.append(_a)
+            st.session_state.prev_active_alerts = _current_keys
 
         m1, m2, m3, m4, m5 = st.columns(5)
         with m1:
@@ -665,7 +707,16 @@ def main():
     # ====================================================================
     st.markdown("### 🚨 Active Alerts")
     # Build a fixed 3×2 grid (always 6 cells)
-    display_alerts = critical_alerts[:6]  # cap at 6
+    # Filter R4 alerts within 60-second cooldown from display
+    _filtered_alerts = []
+    for _a in critical_alerts:
+        if _a['rule'] == 'Rule 4':
+            _p = _a.get('parameter', '')
+            _last = st.session_state.r4_last_logged.get(_p, -9999)
+            if current_idx - _last < 60 and current_idx != _last:
+                continue  # within cooldown, hide from display
+        _filtered_alerts.append(_a)
+    display_alerts = _filtered_alerts[:6]  # cap at 6
     grid_html = (
         '<div style="display:grid;grid-template-columns:repeat(3,1fr);'
         'grid-template-rows:repeat(2,auto);gap:4px;height:90px;overflow:hidden;">'
@@ -853,10 +904,8 @@ def main():
             col_idx += 1
 
     # ====================================================================
-    # 7. SHAP EXPLANATION  (chart hidden during playback, values still used)
+    # 7. SHAP EXPLANATION  (chart hidden during playback, values reused from above)
     # ====================================================================
-    shap_df = get_shap_explanation(current_row, model, scaler, feature_names)
-
     if not st.session_state.playing:
         st.markdown("### 🔍 SHAP Explanation – Why Anomalous?")
 
@@ -891,58 +940,6 @@ def main():
                     f'(SHAP: {top_feature["SHAP"]:+.3f})</div>',
                     unsafe_allow_html=True
                 )
-
-    # ---- Rule 4: SHAP-based anomaly alerts (uses shap_df computed above) ----
-    if shap_df is not None:
-        _row_time = ''
-        if 'TIME' in df.columns and pd.notna(current_row.get('TIME')):
-            _rt = current_row['TIME']
-            _row_time = _rt.strftime('%H:%M:%S') if hasattr(_rt, 'strftime') else str(_rt).split('.')[0]
-        _r4_current_keys = set()
-        for _, _sf in shap_df.iterrows():
-            if _sf['SHAP'] < -0.20:
-                _feat = _sf['Feature']
-                _sval = _sf['SHAP']
-                _fval = _sf['Value']
-                if 'Gradient' in _feat or 'Diff' in _feat:
-                    _r4_action = 'Check thermal uniformity; reduce casting speed'
-                elif 'Std' in _feat or 'Range' in _feat:
-                    _r4_action = 'Inspect mold for uneven wear'
-                elif 'Heat_Flux' in _feat or 'Flow' in _feat:
-                    _r4_action = 'Verify cooling water flow rate'
-                elif 'Edge' in _feat or 'Center' in _feat:
-                    _r4_action = 'Check nozzle alignment; adjust spray pattern'
-                else:
-                    _r4_action = 'Reduce casting speed; monitor closely'
-                _r4_alert = {
-                    'rule': 'Rule 4',
-                    'severity': 'critical',
-                    'message': f"{_feat}: SHAP {_sval:+.3f}",
-                    'parameter': _feat,
-                    'value': _sval,
-                    'index': current_idx,
-                    'time': _row_time,
-                    'tc': _feat,
-                    'description': f"{_feat} (SHAP {_sval:+.3f}) driving anomaly",
-                    'actual_value': f"{_fval:.2f}",
-                    'compared_with': f"SHAP {_sval:+.4f}",
-                    'action': _r4_action
-                }
-                critical_alerts.append(_r4_alert)
-                _r4_key = ('Rule 4', _feat, _feat)
-                _r4_current_keys.add(_r4_key)
-                # Log R4 during playback with consecutive-burst dedup
-                if st.session_state.playing:
-                    if _r4_key not in st.session_state.prev_active_alerts:
-                        st.session_state.play_total_alerts += 1
-                        st.session_state.play_r4_alerts += 1
-                        st.session_state.alert_log.append(_r4_alert)
-        # Update prev_active_alerts: remove old R4 keys, add current R4 keys
-        if st.session_state.playing:
-            st.session_state.prev_active_alerts = (
-                (st.session_state.prev_active_alerts - {k for k in st.session_state.prev_active_alerts if k[0] == 'Rule 4'})
-                | _r4_current_keys
-            )
 
     # ====================================================================
     # 8. ALERT HISTORY LOG  (below everything)
@@ -1011,26 +1008,28 @@ def main():
         next_idx = min(st.session_state.current_idx + step_size, play_end_idx)
 
         # Scan ALL intermediate rows for alerts so none are missed at high speed
-        # Use consecutive-burst dedup: track prev_active per scanned row
+        # R1-R3: every row.  R4 (SHAP): batched every 3 rows for performance.
         scan_start = st.session_state.current_idx + 1
         scan_end = next_idx  # inclusive
+        _last_shap = None  # reuse SHAP across batch
         for _scan_idx in range(scan_start, scan_end + 1):
             if _scan_idx >= total_rows:
                 break
             _scan_row = df.iloc[_scan_idx]
 
-            # R1-R3 alerts
+            # R1-R3 alerts (fast — every row)
             _scan_alerts = check_rules(df, _scan_idx, tc_groups)
             _scan_critical = [a for a in _scan_alerts if a['severity'] == 'critical']
 
-            # R4 SHAP alerts for intermediate rows
-            _scan_shap = get_shap_explanation(_scan_row, model, scaler, feature_names)
-            if _scan_shap is not None:
+            # R4 SHAP alerts: compute every 3 rows, reuse for in-between
+            if (_scan_idx - scan_start) % 3 == 0:
+                _last_shap = get_shap_explanation(_scan_row, model, scaler, feature_names)
+            if _last_shap is not None:
                 _scan_time = ''
                 if 'TIME' in df.columns and pd.notna(_scan_row.get('TIME')):
                     _srt = _scan_row['TIME']
                     _scan_time = _srt.strftime('%H:%M:%S') if hasattr(_srt, 'strftime') else str(_srt).split('.')[0]
-                for _, _sf in _scan_shap.iterrows():
+                for _, _sf in _last_shap.iterrows():
                     if _sf['SHAP'] < -0.20:
                         _feat = _sf['Feature']
                         _sval = _sf['SHAP']
@@ -1057,7 +1056,7 @@ def main():
                             'action': _r4a
                         })
 
-            # Consecutive-burst dedup for all rules (R1-R4)
+            # Dedup: R1-R3 consecutive-burst, R4 60-second cooldown
             _scan_keys = set()
             for _a in _scan_critical:
                 _dk = (_a['rule'], _a.get('tc', ''), _a.get('parameter', ''))
@@ -1065,19 +1064,27 @@ def main():
             _new_scan = _scan_keys - st.session_state.prev_active_alerts
             for _a in _scan_critical:
                 _dk = (_a['rule'], _a.get('tc', ''), _a.get('parameter', ''))
-                if _dk not in _new_scan:
-                    continue
-                _new_scan.discard(_dk)
-                st.session_state.play_total_alerts += 1
-                if _a['rule'] == 'Rule 1':
-                    st.session_state.play_r1_alerts += 1
-                elif _a['rule'] == 'Rule 2':
-                    st.session_state.play_r2_alerts += 1
-                elif _a['rule'] == 'Rule 3':
-                    st.session_state.play_r3_alerts += 1
-                elif _a['rule'] == 'Rule 4':
+                if _a['rule'] == 'Rule 4':
+                    _param = _a.get('parameter', '')
+                    _last = st.session_state.r4_last_logged.get(_param, -9999)
+                    if _scan_idx - _last < 60:
+                        continue
+                    st.session_state.r4_last_logged[_param] = _scan_idx
+                    st.session_state.play_total_alerts += 1
                     st.session_state.play_r4_alerts += 1
-                st.session_state.alert_log.append(_a)
+                    st.session_state.alert_log.append(_a)
+                else:
+                    if _dk not in _new_scan:
+                        continue
+                    _new_scan.discard(_dk)
+                    st.session_state.play_total_alerts += 1
+                    if _a['rule'] == 'Rule 1':
+                        st.session_state.play_r1_alerts += 1
+                    elif _a['rule'] == 'Rule 2':
+                        st.session_state.play_r2_alerts += 1
+                    elif _a['rule'] == 'Rule 3':
+                        st.session_state.play_r3_alerts += 1
+                    st.session_state.alert_log.append(_a)
             st.session_state.prev_active_alerts = _scan_keys
 
         if next_idx >= play_end_idx:
